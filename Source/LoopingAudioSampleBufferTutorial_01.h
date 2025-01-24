@@ -47,6 +47,7 @@
 
 #pragma once
 #include "BouncingBall.h"
+#include "ReferenceCountedBuffer.h"
 
 //==============================================================================
 class MainContentComponent   : public juce::AudioAppComponent
@@ -65,8 +66,10 @@ public:
         setSize (300, 200);
 
         formatManager.registerBasicFormats();
+        
+        setAudioChannels (0, 2); // [7]
     }
-
+    
     ~MainContentComponent() override
     {
         shutdownAudio();
@@ -76,12 +79,29 @@ public:
 
     void getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill) override
     {
+        ReferenceCountedBuffer::Ptr bufferToUse = nullptr;
+        
+        {
+            SpinLock::ScopedTryLockType sl{ currentBufferLock };
+            
+            if (sl.isLocked ())
+                bufferToUse = currentBuffer;
+            
+            if (bufferToUse == nullptr)
+            {
+                bufferToFill.clearActiveBufferRegion();
+                return;
+            }
+        }
+        
+        auto& fileBuffer = bufferToUse->getDataRef ();
+        
         auto numInputChannels = fileBuffer.getNumChannels();
         auto numOutputChannels = bufferToFill.buffer->getNumChannels();
-
+        
         auto outputSamplesRemaining = bufferToFill.numSamples;                                  // [8]
         auto outputSamplesOffset = bufferToFill.startSample;                                    // [9]
-
+        
         while (outputSamplesRemaining > 0)
         {
             auto bufferSamplesRemaining = fileBuffer.getNumSamples() - position;                // [10]
@@ -108,7 +128,8 @@ public:
 
     void releaseResources() override
     {
-        fileBuffer.setSize (0, 0);
+        SpinLock::ScopedLockType slt{ currentBufferLock };
+        currentBuffer = nullptr;
     }
 
     void resized() override
@@ -122,8 +143,6 @@ private:
     
     void openButtonClicked()
     {
-        shutdownAudio();                                                                            // [1]
-
         chooser = std::make_unique<juce::FileChooser> ("Select a Wave file shorter than 2 seconds to play...",
                                                        juce::File{},
                                                        "*.wav");
@@ -140,28 +159,30 @@ private:
 
             std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (file)); // [2]
 
+            jassert (reader.get() != nullptr);
             if (reader.get() != nullptr)
             {
                 auto duration = (float) reader->lengthInSamples / reader->sampleRate;           // [3]
 
+                ReferenceCountedBuffer::Ptr newBuffer = new ReferenceCountedBuffer (file.getFileNameWithoutExtension(), reader->numChannels, reader->lengthInSamples);
 
-                fileBuffer.setSize ((int) reader->numChannels, (int) reader->lengthInSamples);  // [4]
-                reader->read (&fileBuffer,                                                      // [5]
+                reader->read (&newBuffer->getDataRef(),                                                      // [5]
                               0,                                                                //  [5.1]
                               (int) reader->lengthInSamples,                                    //  [5.2]
                               0,                                                                //  [5.3]
                               true,                                                             //  [5.4]
                               true);                                                            //  [5.5]
                 position = 0;                                                                   // [6]
-                setAudioChannels (0, (int) reader->numChannels);                                // [7]
-            
+                
+                SpinLock::ScopedLockType slt{ currentBufferLock };
+                currentBuffer = newBuffer;
             }
         });
     }
 
     void clearButtonClicked()
     {
-        shutdownAudio();
+
     }
 
     //==========================================================================
@@ -171,8 +192,11 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
 
     juce::AudioFormatManager formatManager;
-    juce::AudioSampleBuffer fileBuffer;
+
     int position;
+
+    ReferenceCountedBuffer::Ptr currentBuffer;
+    SpinLock currentBufferLock;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainContentComponent)
 };

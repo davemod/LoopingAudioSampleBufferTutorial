@@ -9,6 +9,8 @@
       <FILE id="pIA2NP" name="Main.cpp" compile="1" resource="0" file="Source/Main.cpp"/>
       <FILE id="zXp7EF" name="LoopingAudioSampleBufferTutorial_01.h" compile="0"
             resource="0" file="Source/LoopingAudioSampleBufferTutorial_01.h"/>
+      <FILE id="RjhPb7" name="ReferenceCountedBuffer.h" compile="0" resource="0"
+            file="Source/ReferenceCountedBuffer.h"/>
       <FILE id="qBktEL" name="BouncingBall.h" compile="0" resource="0" file="Source/BouncingBall.h"/>
     </GROUP>
   </MAINGROUP>
