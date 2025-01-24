@@ -79,11 +79,14 @@ public:
 
     void getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill) override
     {
+        /** @TODO: Problem, in steps a), b) und c) um zu veranschaulichen, wann das Problem auftritt.*/
+        
         ReferenceCountedBuffer::Ptr bufferToUse = nullptr;
         
         {
             SpinLock::ScopedTryLockType sl{ currentBufferLock };
             
+            // a) angenommen, wir bekommen tatsächlich in zwei Zeilen eine neue Referenz von currentBuffer
             if (sl.isLocked ())
                 bufferToUse = currentBuffer;
             
@@ -93,6 +96,11 @@ public:
                 return;
             }
         }
+        
+        
+        /* b) ...   und jetzt, wo wir die Referenz haben, currentBuffer = nullptr von außen gesetzt wird und
+                    bufferToUse nun die *einzige* Referenz ist
+         */
         
         auto& fileBuffer = bufferToUse->getDataRef ();
         
@@ -124,6 +132,14 @@ public:
             if (position == fileBuffer.getNumSamples())
                 position = 0;                                                                   // [16]
         }
+        
+        
+        /** c)      ... und nun die letzte Referenz (bufferToUse) out of scope geht
+                wird nun der gesamt ReferenceCountedBuffer **gelöscht** und zwar auf dem AudioThread.
+                Ditte darf nicht passieren.
+         
+                **Wie könnte man das lösen?**
+         */
     }
 
     void releaseResources() override
@@ -157,6 +173,8 @@ private:
             if (file == juce::File{})
                 return;
 
+            /// @TODO: Das laden an sich soll auf einem extra thread laufen. Angucken -> juce::ThreadPool
+            
             std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (file)); // [2]
 
             jassert (reader.get() != nullptr);
@@ -182,7 +200,7 @@ private:
 
     void clearButtonClicked()
     {
-
+        /// @TODO: Clear Button soll den currentBuffer null setzen
     }
 
     //==========================================================================
