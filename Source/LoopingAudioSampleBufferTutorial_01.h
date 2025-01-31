@@ -179,32 +179,39 @@ private:
             if (file == juce::File{})
                 return;
 
-            /// @TODO: Das laden an sich soll auf einem extra thread laufen. Angucken -> juce::ThreadPool
             
-            std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (file)); // [2]
-
-            jassert (reader.get() != nullptr);
-            if (reader.get() != nullptr)
+            auto lambda = [/*capture list*/] (/*arguments*/) {/* function body */ };
+            
+            threads.addJob ([&, file]()
             {
-                auto duration = (float) reader->lengthInSamples / reader->sampleRate;           // [3]
+                std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (file)); // [2]
 
-                ReferenceCountedBuffer::Ptr newBuffer = new ReferenceCountedBuffer (file.getFileNameWithoutExtension(), reader->numChannels, reader->lengthInSamples);
+                jassert (reader.get() != nullptr);
+                if (reader.get() != nullptr)
+                {
+                    auto duration = (float) reader->lengthInSamples / reader->sampleRate;           // [3]
 
-                reader->read (&newBuffer->getDataRef(),                                                      // [5]
-                              0,                                                                //  [5.1]
-                              (int) reader->lengthInSamples,                                    //  [5.2]
-                              0,                                                                //  [5.3]
-                              true,                                                             //  [5.4]
-                              true);                                                            //  [5.5]
-                position = 0;                                                                   // [6]
-                
-                // add newBuffer to array to ensure that we have at least two references to our buffer
-                buffers.add (newBuffer);
-                
-                // lock the currentBufferLock to ensure that audio thread is not getting the reference at the same time
-                SpinLock::ScopedLockType slt{ currentBufferLock };
-                currentBuffer = newBuffer;
-            }
+                    ReferenceCountedBuffer::Ptr newBuffer = new ReferenceCountedBuffer (file.getFileNameWithoutExtension(), reader->numChannels, reader->lengthInSamples);
+
+                    reader->read (&newBuffer->getDataRef(),                                                      // [5]
+                                  0,                                                                //  [5.1]
+                                  (int) reader->lengthInSamples,                                    //  [5.2]
+                                  0,                                                                //  [5.3]
+                                  true,                                                             //  [5.4]
+                                  true);                                                            //  [5.5]
+                    position = 0;                                                                   // [6]
+                    
+                    // add newBuffer to array to ensure that we have at least two references to our buffer
+                    buffers.add (newBuffer);
+                    
+                    // lock the currentBufferLock to ensure that audio thread is not getting the reference at the same time
+                    SpinLock::ScopedLockType slt{ currentBufferLock };
+                    currentBuffer = newBuffer;
+                }
+            });
+            
+            
+            
         });
     }
 
@@ -227,6 +234,8 @@ private:
         }
     }
 
+    ThreadPool threads;
+    
     //==========================================================================
     juce::TextButton openButton;
     juce::TextButton clearButton;
