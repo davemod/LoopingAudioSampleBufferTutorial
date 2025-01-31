@@ -50,7 +50,7 @@
 #include "ReferenceCountedBuffer.h"
 
 //==============================================================================
-class MainContentComponent   : public juce::AudioAppComponent
+class MainContentComponent   : public juce::AudioAppComponent, public juce::Timer
 {
 public:
     MainContentComponent()
@@ -68,6 +68,8 @@ public:
         formatManager.registerBasicFormats();
         
         setAudioChannels (0, 2); // [7]
+        
+        startTimer(2000);
     }
     
     ~MainContentComponent() override
@@ -80,27 +82,31 @@ public:
     void getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill) override
     {
         /** @TODO: Problem, in steps a), b) und c) um zu veranschaulichen, wann das Problem auftritt.*/
+    
+        const auto getBufferToUse = [&](){
+            SpinLock::ScopedLockType sl{ currentBufferLock };
+            return currentBuffer;
+        };
         
-        ReferenceCountedBuffer::Ptr bufferToUse = nullptr;
-        
+        ReferenceCountedBuffer::Ptr bufferToUse = getBufferToUse();
+
+        if (bufferToUse == nullptr)
         {
-            SpinLock::ScopedTryLockType sl{ currentBufferLock };
-            
-            // a) angenommen, wir bekommen tatsächlich in zwei Zeilen eine neue Referenz von currentBuffer
-            if (sl.isLocked ())
-                bufferToUse = currentBuffer;
-            
-            if (bufferToUse == nullptr)
-            {
-                bufferToFill.clearActiveBufferRegion();
-                return;
-            }
+            bufferToFill.clearActiveBufferRegion();
+            return;
         }
         
+            
+            
+    
+        
+        // a) angenommen, wir bekommen tatsächlich in zwei Zeilen eine neue Referenz von currentBuffer
         
         /* b) ...   und jetzt, wo wir die Referenz haben, currentBuffer = nullptr von außen gesetzt wird und
                     bufferToUse nun die *einzige* Referenz ist
          */
+        
+        
         
         auto& fileBuffer = bufferToUse->getDataRef ();
         
@@ -192,6 +198,10 @@ private:
                               true);                                                            //  [5.5]
                 position = 0;                                                                   // [6]
                 
+                // add newBuffer to array to ensure that we have at least two references to our buffer
+                buffers.add (newBuffer);
+                
+                // lock the currentBufferLock to ensure that audio thread is not getting the reference at the same time
                 SpinLock::ScopedLockType slt{ currentBufferLock };
                 currentBuffer = newBuffer;
             }
@@ -200,7 +210,21 @@ private:
 
     void clearButtonClicked()
     {
-        /// @TODO: Clear Button soll den currentBuffer null setzen
+        SpinLock::ScopedLockType slt{ currentBufferLock };
+        currentBuffer = nullptr;
+    }
+    
+    void timerCallback () override
+    {
+        // iterate over buffers and check for getReferenceCount () <= 1
+        // remove buffers from array in case its unused
+        for (int i = buffers.size (); --i >= 0;)
+        {
+            auto ptr = buffers.getUnchecked(i);
+            
+            if (ptr->getReferenceCount() <= 2)
+                buffers.remove (i);
+        }
     }
 
     //==========================================================================
@@ -215,6 +239,7 @@ private:
 
     ReferenceCountedBuffer::Ptr currentBuffer;
     SpinLock currentBufferLock;
-
+    ReferenceCountedArray<ReferenceCountedBuffer> buffers;
+    
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainContentComponent)
 };
